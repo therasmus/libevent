@@ -5,16 +5,27 @@ dnl See LICENSE for copying information.
 dnl
 dnl Original version Dug Song <dugsong@monkey.org>
 
-AC_INIT(libevent,2.1.4-alpha-dev)
+AC_INIT(libevent,2.1.5-beta)
 AC_PREREQ(2.59)
 AC_CONFIG_SRCDIR(event.c)
 
 AC_CONFIG_MACRO_DIR([m4])
-AM_INIT_AUTOMAKE
+
+# 'foreign' means that we're not enforcing GNU package rules strictly.
+# '1.9' means that we need automake 1.9 or later (and we do).
+# serial-tests means that we don't need parallel test harness
+AM_INIT_AUTOMAKE(m4_esyscmd([echo foreign 1.9 subdir-objects
+    case `automake --version | head -n 1` in
+    *1.9*);;
+    *1.10*);;
+    *1.11*);;
+    *) echo serial-tests;;
+    esac]))
+
 dnl AM_SILENT_RULES req. automake 1.11.  [no] defaults V=1
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_CONFIG_HEADERS(config.h  evconfig-private.h:evconfig-private.h.in)
-AC_DEFINE(NUMERIC_VERSION, 0x02010401, [Numeric representation of the version])
+AC_DEFINE(NUMERIC_VERSION, 0x02010500, [Numeric representation of the version])
 
 dnl Initialize prefix.
 if test "$prefix" = "NONE"; then
@@ -369,6 +380,7 @@ AC_CHECK_FUNCS([ \
   unsetenv \
   usleep \
   vasprintf \
+  getservbyname \
 ])
 AM_CONDITIONAL(STRLCPY_IMPL, [test x"$ac_cv_func_strlcpy" = xno])
 
@@ -394,7 +406,6 @@ if test "$libevent_cv_getaddrinfo" = "yes" ; then
     AC_DEFINE([HAVE_GETADDRINFO], [1], [Do we have getaddrinfo()?])
 else
 
-AC_CHECK_FUNCS([getservbyname])
 # Check for gethostbyname_r in all its glorious incompatible versions.
 #   (This is cut-and-pasted from Tor, which based its logic on
 #   Python's configure.in.)
@@ -763,6 +774,10 @@ fi
 
 # check if we have and should use openssl
 AM_CONDITIONAL(OPENSSL, [test "$enable_openssl" != "no" && test "$have_openssl" = "yes"])
+if test "x$enable_openssl" = "xyes"; then
+	AC_SEARCH_LIBS([ERR_remove_thread_state], [crypto],
+		[AC_DEFINE(HAVE_ERR_REMOVE_THREAD_STATE, 1, [Define to 1 if you have ERR_remove_thread_stat().])])
+fi
 
 # Add some more warnings which we use in development but not in the
 # released versions.  (Some relevant gcc versions can't handle these.)
@@ -788,7 +803,7 @@ if test x$enable_gcc_warnings != xno && test "$GCC" = "yes"; then
 #error
 #endif])], have_clang=yes, have_clang=no)
 
-  CFLAGS="$CFLAGS -W -Wfloat-equal -Wundef -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wwrite-strings -Wredundant-decls -Wchar-subscripts -Wcomment -Wformat -Wwrite-strings -Wmissing-declarations -Wredundant-decls -Wnested-externs -Wbad-function-cast -Wswitch-enum"
+  CFLAGS="$CFLAGS -W -Wfloat-equal -Wundef -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wwrite-strings -Wredundant-decls -Wchar-subscripts -Wcomment -Wformat -Wwrite-strings -Wmissing-declarations -Wredundant-decls -Wnested-externs -Wbad-function-cast -Wswitch"
   if test x$enable_gcc_warnings = xyes; then
     CFLAGS="$CFLAGS -Werror"
   fi
@@ -911,5 +926,5 @@ AC_SUBST([LIBEVENT_GC_SECTIONS])
 
 AM_CONDITIONAL([INSTALL_LIBEVENT], [test "$enable_libevent_install" = "yes"])
 
-AC_CONFIG_FILES( [libevent.pc libevent_openssl.pc libevent_pthreads.pc] )
+AC_CONFIG_FILES( [libevent.pc libevent_openssl.pc libevent_pthreads.pc libevent_core.pc libevent_extra.pc] )
 AC_OUTPUT(Makefile)

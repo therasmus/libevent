@@ -345,7 +345,8 @@ be_filter_process_output(struct bufferevent_filtered *bevf,
 
 	/* disable the callback that calls this function
 	   when the user adds to the output buffer. */
-	evbuffer_cb_set_flags(bufev->output, bevf->outbuf_cb, 0);
+	evbuffer_cb_clear_flags(bufev->output, bevf->outbuf_cb,
+	    EVBUFFER_CB_ENABLED);
 
 	do {
 		int processed = 0;
@@ -536,10 +537,20 @@ be_filter_ctrl(struct bufferevent *bev, enum bufferevent_ctrl_op op,
 		bevf = upcast(bev);
 		data->ptr = bevf->underlying;
 		return 0;
-	case BEV_CTRL_GET_FD:
 	case BEV_CTRL_SET_FD:
+		bevf = upcast(bev);
+
+		if (bevf->underlying &&
+			bevf->underlying->be_ops &&
+			bevf->underlying->be_ops->ctrl) {
+		    return (bevf->underlying->be_ops->ctrl)(bevf->underlying, op, data);
+		}
+
+	case BEV_CTRL_GET_FD:
 	case BEV_CTRL_CANCEL_ALL:
 	default:
 		return -1;
 	}
+
+	return -1;
 }

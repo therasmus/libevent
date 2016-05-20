@@ -31,6 +31,10 @@
 #include <windows.h>
 #endif
 
+#ifdef EVENT__HAVE_PTHREADS
+#include <pthread.h>
+#endif
+
 #include "event2/event-config.h"
 
 #include <sys/types.h>
@@ -88,10 +92,6 @@ static struct timeval tcalled;
 
 
 #define TEST1	"this is a test"
-
-#ifndef SHUT_WR
-#define SHUT_WR 1
-#endif
 
 #ifdef _WIN32
 #define write(fd,buf,len) send((fd),(buf),(int)(len),0)
@@ -196,7 +196,7 @@ multiple_write_cb(evutil_socket_t fd, short event, void *arg)
 	woff += len;
 
 	if (woff >= (int)sizeof(wbuf)) {
-		shutdown(fd, SHUT_WR);
+		shutdown(fd, EVUTIL_SHUT_WR);
 		if (usepersist)
 			event_del(ev);
 		return;
@@ -276,7 +276,7 @@ combined_write_cb(evutil_socket_t fd, short event, void *arg)
 	if (len == -1)
 		fprintf(stderr, "%s: write\n", __func__);
 	if (len <= 0) {
-		shutdown(fd, SHUT_WR);
+		shutdown(fd, EVUTIL_SHUT_WR);
 		return;
 	}
 
@@ -306,7 +306,7 @@ test_simpleread(void)
 		tt_fail_perror("write");
 	}
 
-	shutdown(pair[0], SHUT_WR);
+	shutdown(pair[0], EVUTIL_SHUT_WR);
 
 	event_set(&ev, pair[1], EV_READ, simple_read_cb, &ev);
 	if (event_add(&ev, NULL) == -1)
@@ -351,7 +351,7 @@ test_simpleread_multiple(void)
 		tt_fail_perror("write");
 	}
 
-	shutdown(pair[0], SHUT_WR);
+	shutdown(pair[0], EVUTIL_SHUT_WR);
 
 	event_set(&one, pair[1], EV_READ, simpleread_multiple_cb, NULL);
 	if (event_add(&one, NULL) == -1)
@@ -817,29 +817,22 @@ end:
 }
 
 #ifndef _WIN32
-static void signal_cb(evutil_socket_t fd, short event, void *arg);
 
 #define current_base event_global_current_base_
 extern struct event_base *current_base;
 
 static void
-child_signal_cb(evutil_socket_t fd, short event, void *arg)
+fork_signal_cb(evutil_socket_t fd, short events, void *arg)
 {
-	struct timeval tv;
-	int *pint = arg;
-
-	*pint = 1;
-
-	tv.tv_usec = 500000;
-	tv.tv_sec = 0;
-	event_loopexit(&tv);
+	event_del(arg);
 }
+
 
 static void
 test_fork(void)
 {
-	int status, got_sigchld = 0;
-	struct event ev, sig_ev;
+	int status;
+	struct event ev, sig_ev, usr_ev, existing_ev;
 	pid_t pid;
 
 	setup_test("After fork: ");
@@ -855,8 +848,11 @@ test_fork(void)
 	if (event_add(&ev, NULL) == -1)
 		exit(1);
 
-	evsignal_set(&sig_ev, SIGCHLD, child_signal_cb, &got_sigchld);
+	evsignal_set(&sig_ev, SIGCHLD, fork_signal_cb, &sig_ev);
 	evsignal_add(&sig_ev, NULL);
+
+	evsignal_set(&existing_ev, SIGUSR2, fork_signal_cb, &existing_ev);
+	evsignal_add(&existing_ev, NULL);
 
 	event_base_assert_ok_(current_base);
 	TT_BLATHER(("Before fork"));
@@ -873,6 +869,11 @@ test_fork(void)
 		TT_BLATHER(("After assert-ok"));
 
 		evsignal_del(&sig_ev);
+
+		evsignal_set(&usr_ev, SIGUSR1, fork_signal_cb, &usr_ev);
+		evsignal_add(&usr_ev, NULL);
+		raise(SIGUSR1);
+		raise(SIGUSR2);
 
 		called = 0;
 
@@ -913,20 +914,81 @@ test_fork(void)
 		fprintf(stderr, "%s: write\n", __func__);
 	}
 
-	shutdown(pair[0], SHUT_WR);
+	shutdown(pair[0], EVUTIL_SHUT_WR);
+
+	evsignal_set(&usr_ev, SIGUSR1, fork_signal_cb, &usr_ev);
+	evsignal_add(&usr_ev, NULL);
+	raise(SIGUSR1);
+	raise(SIGUSR2);
 
 	event_dispatch();
-
-	if (!got_sigchld) {
-		fprintf(stdout, "FAILED (sigchld)\n");
-		exit(1);
-	}
 
 	evsignal_del(&sig_ev);
 
 	end:
 	cleanup_test();
 }
+
+#ifdef EVENT__HAVE_PTHREADS
+static void* del_wait_thread(void *arg)
+{
+	struct timeval tv_start, tv_end;
+
+	evutil_gettimeofday(&tv_start, NULL);
+	event_dispatch();
+	evutil_gettimeofday(&tv_end, NULL);
+
+	test_timeval_diff_eq(&tv_start, &tv_end, 300);
+
+	end:
+	return NULL;
+}
+
+static void
+del_wait_cb(evutil_socket_t fd, short event, void *arg)
+{
+	struct timeval delay = { 0, 300*1000 };
+	TT_BLATHER(("Sleeping"));
+	evutil_usleep_(&delay);
+	test_ok = 1;
+}
+
+static void
+test_del_wait(void)
+{
+	struct event ev;
+	pthread_t thread;
+
+	setup_test("event_del will wait: ");
+
+	event_set(&ev, pair[1], EV_READ, del_wait_cb, &ev);
+	event_add(&ev, NULL);
+
+	pthread_create(&thread, NULL, del_wait_thread, NULL);
+
+	if (write(pair[0], TEST1, strlen(TEST1)+1) < 0) {
+		tt_fail_perror("write");
+	}
+
+	{
+		struct timeval delay = { 0, 30*1000 };
+		evutil_usleep_(&delay);
+	}
+
+	{
+		struct timeval tv_start, tv_end;
+		evutil_gettimeofday(&tv_start, NULL);
+		event_del(&ev);
+		evutil_gettimeofday(&tv_end, NULL);
+		test_timeval_diff_eq(&tv_start, &tv_end, 270);
+	}
+
+	pthread_join(thread, NULL);
+
+	end:
+	;
+}
+#endif
 
 static void
 signal_cb_sa(int sig)
@@ -1820,7 +1882,7 @@ test_event_base_new(void *ptr)
 		tt_abort_printf(("initial write fell short (%d of %d bytes)",
 				 len, towrite));
 
-	if (shutdown(data->pair[0], SHUT_WR))
+	if (shutdown(data->pair[0], EVUTIL_SHUT_WR))
 		tt_abort_perror("initial write shutdown");
 
 	base = event_base_new();
@@ -2290,7 +2352,7 @@ end:
 static void
 evtag_fuzz(void *ptr)
 {
-	u_char buffer[4096];
+	unsigned char buffer[4096];
 	struct evbuffer *tmp = evbuffer_new();
 	struct timeval tv;
 	int i, j;
@@ -2649,7 +2711,7 @@ test_event_once(void *ptr)
 		tt_fail_perror("write");
 	}
 
-	shutdown(data->pair[1], SHUT_WR);
+	shutdown(data->pair[1], EVUTIL_SHUT_WR);
 
 	event_base_dispatch(data->base);
 
@@ -3300,6 +3362,11 @@ struct testcase_t main_testcases[] = {
 #ifndef _WIN32
 	LEGACY(fork, TT_ISOLATED),
 #endif
+#ifdef EVENT__HAVE_PTHREADS
+	/** TODO: support win32 */
+	LEGACY(del_wait, TT_ISOLATED|TT_NEED_THREADS),
+#endif
+
 	END_OF_TESTCASES
 };
 

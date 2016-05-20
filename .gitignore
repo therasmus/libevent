@@ -23,6 +23,9 @@
 *.gcov
 *.gcda
 
+# gdb stuff
+.gdb_history
+
 # Autotools stuff
 .deps
 .dirstamp
@@ -36,11 +39,10 @@ Makefile.in
 
 # ctags stuff
 TAGS
+tags
 
 # Stuff made by our makefiles
-libevent.pc
-libevent_pthreads.pc
-libevent_openssl.pc
+*.pc
 *.log
 *.trs
 
@@ -63,6 +65,7 @@ libevent_openssl.pc
 /config.status
 /config.sub
 /configure
+/configure.lineno
 /depcomp
 /config.h
 /config.h.in
@@ -80,10 +83,12 @@ libevent_openssl.pc
 /sample/event-read-fifo
 /sample/hello-world
 /sample/http-server
+/sample/http-connect
 /sample/le-proxy
 /sample/https-client
 /sample/signal-test
 /sample/time-test
+/sample/event-test
 
 /test-driver
 /test/bench
@@ -120,3 +125,10 @@ libevent_openssl.pc
 /lib/
 /tmp/
 /verify_tests.sh
+/verify_tests.bat
+/event.dir
+/event_core.dir
+/event_extra.dir
+*.vcxproj
+*.sln
+*.filters
